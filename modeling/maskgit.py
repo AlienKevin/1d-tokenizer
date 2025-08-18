@@ -70,9 +70,14 @@ class ImageBert(BaseModel, PyTorchModelHubMixin, tags=["arxiv:2406.07550", "imag
             position_embedding_type="absolute",
             use_cache=True
         ), add_pooling_layer=False)
-        self.model.lm_head = nn.Linear(self.hidden_size, self.target_codebook_size, bias=True)
         
         self.model.post_init()
+
+        # Need to initialize lm_head after post_init
+        # otherwise output dimension will be forcefully reset to vocab_size=self.target_codebook_size + self.condition_num_classes + 2
+        # which causes dimension mismatch with the intended self.target_codebook_size
+        self.model.lm_head = nn.Linear(self.hidden_size, self.target_codebook_size, bias=True)
+        self.model._init_weights(self.model.lm_head)
 
     def _save_pretrained(self, save_directory: Path) -> None:
         """Save weights and config to a local directory."""
