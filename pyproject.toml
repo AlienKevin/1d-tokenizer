@@ -1,0 +1,106 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "1d-tokenizer"
+version = "0.1.0"
+description = "1D Visual Tokenization and Generation - FlowTok, TA-TiTok, MaskGen, RAR, and TiTok"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Ju He"},
+    {name = "Qihang Yu"}, 
+    {name = "Dongwon Kim"},
+    {name = "Mark Weber"},
+    {name = "Xueqing Deng"},
+    {name = "Xiaohui Shen"},
+    {name = "Liang-Chieh Chen"}
+]
+keywords = ["computer vision", "tokenization", "image generation", "transformers", "visual tokens"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9", 
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision",
+    "omegaconf",
+    "transformers",
+    "timm",
+    "open_clip_torch",
+    "einops",
+    "scipy",
+    "pillow",
+    "accelerate", 
+    "gdown",
+    "huggingface-hub",
+    "wandb",
+    "torch-fidelity",
+    "torchinfo",
+    "webdataset",
+    "diffusers",
+    "tensorflow",
+    "google-cloud-storage",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "isort",
+    "flake8",
+    "mypy",
+]
+docs = [
+    "sphinx",
+    "sphinx-rtd-theme",
+    "myst-parser",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["modeling*", "utils*", "data*", "evaluator*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.yml", "*.json"]
+
+[tool.black]
+line-length = 88
+target-version = ["py38", "py39", "py310", "py311", "py312"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["modeling", "utils", "data", "evaluator"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

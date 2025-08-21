@@ -31,7 +31,7 @@ from tqdm import tqdm
 
 def main():
     config = demo_util.get_config_cli()
-    num_fid_samples = 50000
+    num_fid_samples = 1000
     per_proc_batch_size = 125
     sample_folder_dir = config.experiment.output_dir
     seed = 42
@@ -132,9 +132,8 @@ def main():
         all_gathered_samples = torch.cat(gathered_samples, dim=0).numpy()
         print(f"Total gathered samples shape: {all_gathered_samples.shape}")
         
-        npz_path = f"{sample_folder_dir}.npz"
-        np.savez(npz_path, arr_0=all_gathered_samples)
-        print(f"Saved .npz file to {npz_path} [shape={all_gathered_samples.shape}].")
+        # Use the new save_samples function that handles both local and GCS paths
+        demo_util.save_samples(all_gathered_samples, sample_folder_dir)
         print("Done.")
     
     dist.barrier()
