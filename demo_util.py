@@ -92,6 +92,50 @@ def get_maskgen_kl_generator(config):
 
 
 @torch.no_grad()
+def sample_tokens(generator,
+                 labels=None,
+                 guidance_scale=3.0,
+                 guidance_decay="constant",
+                 guidance_scale_pow=3.0,
+                 randomize_temperature=2.0,
+                 softmax_temperature_annealing=False,
+                 num_sample_steps=8,
+                 device="cuda"):
+    generator.eval()
+    if labels is None:
+        # goldfish, chicken, tiger, cat, hourglass, ship, dog, race car, airliner, teddy bear, random
+        labels = [1, 7, 282, 604, 724, 179, 751, 404, 850, torch.randint(0, 999, size=(1,))]
+
+    if not isinstance(labels, torch.Tensor):
+        labels = torch.LongTensor(labels).to(device)
+
+    generated_tokens = generator.generate(
+        condition=labels,
+        guidance_scale=guidance_scale,
+        guidance_decay=guidance_decay,
+        guidance_scale_pow=guidance_scale_pow,
+        randomize_temperature=randomize_temperature,
+        softmax_temperature_annealing=softmax_temperature_annealing,
+        num_sample_steps=num_sample_steps)
+
+    return generated_tokens
+
+
+@torch.no_grad()
+def decode_tokens(generated_tokens, tokenizer):
+    tokenizer.eval()
+    
+    generated_image = tokenizer.decode_tokens(
+        generated_tokens.view(generated_tokens.shape[0], -1)
+    )
+
+    generated_image = torch.clamp(generated_image, 0.0, 1.0)
+    generated_image = (generated_image * 255.0).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8)
+
+    return generated_image
+
+
+@torch.no_grad()
 def sample_fn(generator,
               tokenizer,
               labels=None,

@@ -29,23 +29,6 @@ from huggingface_hub import hf_hub_download
 from tqdm import tqdm
 
 
-def create_npz_from_sample_folder(sample_dir, num=50_000):
-    """
-    Builds a single .npz file from a folder of .png samples.
-    """
-    samples = []
-    for i in tqdm(range(num), desc="Building .npz file from samples"):
-        sample_pil = Image.open(f"{sample_dir}/{i:06d}.png")
-        sample_np = np.asarray(sample_pil).astype(np.uint8)
-        samples.append(sample_np)
-    samples = np.stack(samples)
-    assert samples.shape == (num, samples.shape[1], samples.shape[2], 3)
-    npz_path = f"{sample_dir}.npz"
-    np.savez(npz_path, arr_0=samples)
-    print(f"Saved .npz file to {npz_path} [shape={samples.shape}].")
-    return npz_path
-
-
 def main():
     config = demo_util.get_config_cli()
     num_fid_samples = 50000
@@ -80,11 +63,6 @@ def main():
     titok_tokenizer.to(device)
     titok_generator.to(device)
 
-    if rank == 0:
-        os.makedirs(sample_folder_dir, exist_ok=True)
-        print(f"Saving .png samples at {sample_folder_dir}")
-    dist.barrier()
-
     # Figure out how many samples we need to generate on each GPU and how many iterations we need to run:
     n = per_proc_batch_size
     global_batch_size = n * dist.get_world_size()
@@ -96,7 +74,7 @@ def main():
     assert samples_needed_this_gpu % n == 0, "samples_needed_this_gpu must be divisible by the per-GPU batch size"
     iterations = int(samples_needed_this_gpu // n)
     pbar = range(iterations)
-    pbar = tqdm(pbar) if rank == 0 else pbar
+    pbar = tqdm(pbar, desc='sampling tokens') if rank == 0 else pbar
     total = 0
 
     all_classes = list(range(config.model.generator.condition_num_classes)) * (num_fid_samples // config.model.generator.condition_num_classes)
@@ -104,13 +82,14 @@ def main():
     all_classes = np.array(all_classes[rank * subset_len: (rank+1)*subset_len], dtype=np.int64)
     cur_idx = 0
 
+    all_tokens = []
+
     for _ in pbar:
         y = torch.from_numpy(all_classes[cur_idx * n: (cur_idx+1)*n]).to(device)
         cur_idx += 1
 
-        samples = demo_util.sample_fn(
+        generated_tokens = demo_util.sample_tokens(
             generator=titok_generator,
-            tokenizer=titok_tokenizer,
             labels=y.long(),
             randomize_temperature=config.model.generator.randomize_temperature,
             softmax_temperature_annealing=True,
@@ -119,17 +98,45 @@ def main():
             guidance_decay=config.model.generator.guidance_decay,
             device=device
         )
-        # Save samples to disk as individual .png files
-        for i, sample in enumerate(samples):
-            index = i * dist.get_world_size() + rank + total
-            Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.png")
+
+        all_tokens.append(generated_tokens)
+
+    pbar = range(iterations)
+    pbar = tqdm(pbar, desc='decoding images') if rank == 0 else pbar
+
+    all_samples = []
+
+    for i in pbar:
+        generated_tokens = all_tokens[i]
+        samples = demo_util.decode_tokens(generated_tokens=generated_tokens, tokenizer=titok_tokenizer)
+        all_samples.append(samples)
         total += global_batch_size
 
-    # Make sure all processes have finished saving their samples before attempting to convert to .npz
-    dist.barrier()
+    # Concatenate all samples from this rank
+    rank_samples = np.concatenate(all_samples, axis=0)
+    print(f"Rank {rank} samples shape: {rank_samples.shape}")
+
+    # Create Gloo group for CPU tensor gathering (works even if default backend is NCCL)
+    gloo_group = dist.new_group(backend="gloo")
+    
+    # Convert to tensor for distributed gathering
+    rank_samples_tensor = torch.from_numpy(rank_samples)
+    
+    # Gather samples from all ranks
+    world_size = dist.get_world_size(group=gloo_group)
+    gathered_samples = [torch.empty_like(rank_samples_tensor) for _ in range(world_size)]
+    dist.all_gather(gathered_samples, rank_samples_tensor, group=gloo_group)
+    
+    # Create npz directly from gathered samples
     if rank == 0:
-        create_npz_from_sample_folder(sample_folder_dir, num_fid_samples)
+        all_gathered_samples = torch.cat(gathered_samples, dim=0).numpy()
+        print(f"Total gathered samples shape: {all_gathered_samples.shape}")
+        
+        npz_path = f"{sample_folder_dir}.npz"
+        np.savez(npz_path, arr_0=all_gathered_samples)
+        print(f"Saved .npz file to {npz_path} [shape={all_gathered_samples.shape}].")
         print("Done.")
+    
     dist.barrier()
     dist.destroy_process_group()
 
