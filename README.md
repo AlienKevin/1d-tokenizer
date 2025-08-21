@@ -67,19 +67,8 @@ See more details at [README_TiTok](README_TiTok.md).
 
 
 ## Installation
-
-### Using uv (Recommended)
 ```shell
-# Install uv if you haven't already
-pip install uv
-
-# Install the project and all dependencies
-uv sync
-```
-
-### Using pip
-```shell
-pip install -e .
+pip3 install -r requirements.txt
 ```
 
 ## Citing
