@@ -96,6 +96,8 @@ def main():
             num_sample_steps=config.model.generator.num_steps,
             guidance_scale=config.model.generator.guidance_scale,
             guidance_decay=config.model.generator.guidance_decay,
+            scheduler_mode=config.model.generator.scheduler_mode,
+            sampler_type=config.model.generator.sampler_type,
             device=device
         )
 

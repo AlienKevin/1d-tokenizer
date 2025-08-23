@@ -100,6 +100,8 @@ def sample_tokens(generator,
                  randomize_temperature=2.0,
                  softmax_temperature_annealing=False,
                  num_sample_steps=8,
+                 scheduler_mode='arccos',
+                 sampler_type='confidence',
                  device="cuda"):
     generator.eval()
     if labels is None:
@@ -116,7 +118,9 @@ def sample_tokens(generator,
         guidance_scale_pow=guidance_scale_pow,
         randomize_temperature=randomize_temperature,
         softmax_temperature_annealing=softmax_temperature_annealing,
-        num_sample_steps=num_sample_steps)
+        num_sample_steps=num_sample_steps,
+        scheduler_mode=scheduler_mode,
+        sampler_type=sampler_type)
 
     return generated_tokens
 
@@ -145,6 +149,7 @@ def sample_fn(generator,
               randomize_temperature=2.0,
               softmax_temperature_annealing=False,
               num_sample_steps=8,
+              scheduler_mode='arccos',
               device="cuda",
               return_tensor=False):
     generator.eval()
@@ -163,7 +168,8 @@ def sample_fn(generator,
         guidance_scale_pow=guidance_scale_pow,
         randomize_temperature=randomize_temperature,
         softmax_temperature_annealing=softmax_temperature_annealing,
-        num_sample_steps=num_sample_steps)
+        num_sample_steps=num_sample_steps,
+        scheduler_mode=scheduler_mode)
     
     generated_image = tokenizer.decode_tokens(
         generated_tokens.view(generated_tokens.shape[0], -1)

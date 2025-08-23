@@ -120,7 +120,10 @@ class ImageBert(BaseModel, PyTorchModelHubMixin, tags=["arxiv:2406.07550", "imag
                  guidance_scale_pow=3.0,
                  randomize_temperature=4.5,
                  softmax_temperature_annealing=False,
-                 num_sample_steps=8):
+                 num_sample_steps=8,
+                 scheduler_mode="arccos",
+                 sampler_type="confidence",
+                 ):
         if guidance_decay not in ["constant", "linear", "power-cosine"]:
             # contstant: constant guidance scale
             # linear: linear increasing the guidance scale as in MUSE
@@ -178,16 +181,33 @@ class ImageBert(BaseModel, PyTorchModelHubMixin, tags=["arxiv:2406.07550", "imag
             sampled_ids = torch.where(is_mask, sampled_ids, ids)
             sampled_logits = torch.where(is_mask, sampled_logits, +np.inf).float()
             # masking
-            mask_ratio = np.arccos(ratio) / (math.pi * 0.5)
+            if scheduler_mode == 'arccos':
+                mask_ratio = np.arccos(ratio) / (math.pi * 0.5)
+            elif scheduler_mode == 'linear':
+                mask_ratio = 1 - ratio
 
-            mask_len = torch.Tensor([np.floor(self.image_seq_len * mask_ratio)]).to(device)
-            mask_len = torch.maximum(torch.Tensor([1]).to(device),
-                                     torch.minimum(torch.sum(is_mask, dim=-1, keepdims=True) - 1,
-                                                   mask_len))[0].squeeze()
-            confidence = add_gumbel_noise(sampled_logits, annealed_temp)
-            sorted_confidence, _ = torch.sort(confidence, axis=-1)
-            cut_off = sorted_confidence[:, mask_len.long() - 1:mask_len.long()]
-            masking = (confidence <= cut_off)
+            if sampler_type == 'fixed':
+                schedule = [6, 1, 9, 19, 8, 13, 2, 28, 23, 22, 16, 31, 4, 30, 18, 12, 27, 11, 0, 20, 5, 24, 14, 7, 29, 26, 15, 25, 3, 21, 17, 10]
+                batch_size = condition.shape[0]
+                masking = torch.zeros((batch_size, self.image_seq_len), dtype=torch.bool, device=device)
+                masking[:, schedule[step]] = True
+            elif scheduler_mode in ['arccos', 'linear']:
+                mask_len = torch.Tensor([np.floor(self.image_seq_len * mask_ratio)]).to(device)
+                mask_len = torch.maximum(torch.Tensor([1]).to(device),
+                                        torch.minimum(torch.sum(is_mask, dim=-1, keepdims=True) - 1,
+                                                    mask_len))[0].squeeze()
+                if sampler_type == 'confidence':
+                    confidence = add_gumbel_noise(sampled_logits, annealed_temp)
+                elif sampler_type == 'random':
+                    confidence = torch.rand_like(sampled_logits)
+                    confidence = torch.where(is_mask, confidence, +np.inf).float()
+                else:
+                    raise ValueError(f"Invalid sampler_type: {sampler_type}")
+                sorted_confidence, _ = torch.sort(confidence, axis=-1)
+                cut_off = sorted_confidence[:, mask_len.long() - 1:mask_len.long()]
+                masking = (confidence <= cut_off)
+            else:
+                raise ValueError(f"Invalid scheduler_mode: {scheduler_mode}")
             if step == num_sample_steps - 1:
                 ids = sampled_ids
             else:
