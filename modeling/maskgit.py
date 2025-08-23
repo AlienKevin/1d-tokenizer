@@ -123,6 +123,7 @@ class ImageBert(BaseModel, PyTorchModelHubMixin, tags=["arxiv:2406.07550", "imag
                  num_sample_steps=8,
                  scheduler_mode="arccos",
                  sampler_type="confidence",
+                 return_trace=False,
                  ):
         if guidance_decay not in ["constant", "linear", "power-cosine"]:
             # contstant: constant guidance scale
@@ -134,6 +135,9 @@ class ImageBert(BaseModel, PyTorchModelHubMixin, tags=["arxiv:2406.07550", "imag
                           self.mask_token_id, device=device)
 
         cfg_scale = guidance_scale if guidance_decay == "constant" else 0.
+        
+        # Initialize trace if requested
+        trace = [] if return_trace else None
 
         for step in range(num_sample_steps):
             ratio = 1. * (step + 1) / num_sample_steps
@@ -212,9 +216,16 @@ class ImageBert(BaseModel, PyTorchModelHubMixin, tags=["arxiv:2406.07550", "imag
                 ids = sampled_ids
             else:
                 ids = torch.where(masking, self.mask_token_id, sampled_ids)
+            
+            # Collect trace if requested
+            if return_trace:
+                trace.append(ids.clone())
 
             if guidance_decay == "linear":
                 cfg_scale = ratio * guidance_scale
+        
+        if return_trace:
+            return torch.stack(trace, dim=1)  # [batch_size, num_steps, seq_len]
         return ids
 
     def masking_input_tokens(self, input_tokens):

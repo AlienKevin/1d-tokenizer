@@ -35,6 +35,9 @@ def main():
     per_proc_batch_size = 125
     sample_folder_dir = config.experiment.output_dir
     seed = 42
+    
+    # Check if we should only sample tokens (skip decoding)
+    sample_tokens_only = getattr(config.experiment, 'sample_tokens_only', False)
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
@@ -82,13 +85,14 @@ def main():
     all_classes = np.array(all_classes[rank * subset_len: (rank+1)*subset_len], dtype=np.int64)
     cur_idx = 0
 
-    all_tokens = []
+    all_results = []
+    all_conditions = []
 
     for _ in pbar:
         y = torch.from_numpy(all_classes[cur_idx * n: (cur_idx+1)*n]).to(device)
         cur_idx += 1
 
-        generated_tokens = demo_util.sample_tokens(
+        result = demo_util.sample_tokens(
             generator=titok_generator,
             labels=y.long(),
             randomize_temperature=config.model.generator.randomize_temperature,
@@ -98,46 +102,98 @@ def main():
             guidance_decay=config.model.generator.guidance_decay,
             scheduler_mode=config.model.generator.scheduler_mode,
             sampler_type=config.model.generator.sampler_type,
-            device=device
+            device=device,
+            return_trace=sample_tokens_only
         )
 
-        all_tokens.append(generated_tokens)
+        all_results.append(result)
+        all_conditions.append(y)
 
-    pbar = range(iterations)
-    pbar = tqdm(pbar, desc='decoding images') if rank == 0 else pbar
-
-    all_samples = []
-
-    for i in pbar:
-        generated_tokens = all_tokens[i]
-        samples = demo_util.decode_tokens(generated_tokens=generated_tokens, tokenizer=titok_tokenizer)
-        all_samples.append(samples)
-        total += global_batch_size
-
-    # Concatenate all samples from this rank
-    rank_samples = np.concatenate(all_samples, axis=0)
-    print(f"Rank {rank} samples shape: {rank_samples.shape}")
-
-    # Create Gloo group for CPU tensor gathering (works even if default backend is NCCL)
-    gloo_group = dist.new_group(backend="gloo")
-    
-    # Convert to tensor for distributed gathering
-    rank_samples_tensor = torch.from_numpy(rank_samples)
-    
-    # Gather samples from all ranks
-    world_size = dist.get_world_size(group=gloo_group)
-    gathered_samples = [torch.empty_like(rank_samples_tensor) for _ in range(world_size)]
-    dist.all_gather(gathered_samples, rank_samples_tensor, group=gloo_group)
-    
-    # Create npz directly from gathered samples
-    if rank == 0:
-        all_gathered_samples = torch.cat(gathered_samples, dim=0).numpy()
-        print(f"Total gathered samples shape: {all_gathered_samples.shape}")
+    if sample_tokens_only:
+        # Results are traces [batch_size, num_steps, seq_len]
+        rank_traces = torch.cat(all_results, dim=0)  # [num_samples, num_steps, seq_len]
+        rank_conditions = torch.cat(all_conditions, dim=0)  # [num_samples]
+        print(f"Rank {rank} traces shape: {rank_traces.shape}, conditions shape: {rank_conditions.shape}")
         
-        npz_path = f"{sample_folder_dir}.npz"
-        np.savez(npz_path, arr_0=all_gathered_samples)
-        print(f"Saved .npz file to {npz_path} [shape={all_gathered_samples.shape}].")
-        print("Done.")
+        # Move to CPU to avoid CUDA OOM during all_gather
+        rank_traces_cpu = rank_traces.cpu()
+        rank_conditions_cpu = rank_conditions.cpu()
+        
+        # Clear GPU memory
+        del rank_traces, rank_conditions
+        torch.cuda.empty_cache()
+        
+        # Create Gloo group for CPU tensor gathering
+        gloo_group = dist.new_group(backend="gloo")
+        
+        # Gather traces and conditions from all ranks on CPU
+        world_size = dist.get_world_size(group=gloo_group)
+        gathered_traces = [torch.empty_like(rank_traces_cpu) for _ in range(world_size)]
+        gathered_conditions = [torch.empty_like(rank_conditions_cpu) for _ in range(world_size)]
+        
+        dist.all_gather(gathered_traces, rank_traces_cpu, group=gloo_group)
+        dist.all_gather(gathered_conditions, rank_conditions_cpu, group=gloo_group)
+        
+        if rank == 0:
+            all_gathered_traces = torch.cat(gathered_traces, dim=0).numpy()
+            all_gathered_conditions = torch.cat(gathered_conditions, dim=0).numpy()
+            print(f"Total gathered traces shape: {all_gathered_traces.shape}")
+            print(f"Total gathered conditions shape: {all_gathered_conditions.shape}")
+            
+            npz_path = f"{sample_folder_dir}.npz"
+            np.savez(npz_path, traces=all_gathered_traces, conditions=all_gathered_conditions)
+            print(f"Saved .npz file to {npz_path} [traces shape={all_gathered_traces.shape}, conditions shape={all_gathered_conditions.shape}].")
+            print("Done.")
+    else:
+        # Original decoding path - results are final tokens
+        pbar = range(iterations)
+        pbar = tqdm(pbar, desc='decoding images') if rank == 0 else pbar
+
+        all_samples = []
+
+        for i in pbar:
+            generated_tokens = all_results[i]  # These are final tokens
+            samples = demo_util.decode_tokens(generated_tokens=generated_tokens, tokenizer=titok_tokenizer)
+            all_samples.append(samples)
+            total += global_batch_size
+
+        # Concatenate all samples and conditions from this rank
+        rank_samples = np.concatenate(all_samples, axis=0)
+        rank_conditions = torch.cat(all_conditions, dim=0)  # [num_samples]
+        print(f"Rank {rank} samples shape: {rank_samples.shape}, conditions shape: {rank_conditions.shape}")
+
+        # Move conditions to CPU to avoid CUDA OOM during all_gather
+        rank_conditions_cpu = rank_conditions.cpu()
+        
+        # Clear GPU memory
+        del rank_conditions
+        torch.cuda.empty_cache()
+
+        # Create Gloo group for CPU tensor gathering (works even if default backend is NCCL)
+        gloo_group = dist.new_group(backend="gloo")
+        
+        # Convert to tensor for distributed gathering (keep samples on CPU)
+        rank_samples_tensor = torch.from_numpy(rank_samples)
+        
+        # Gather samples and conditions from all ranks
+        world_size = dist.get_world_size(group=gloo_group)
+        gathered_samples = [torch.empty_like(rank_samples_tensor) for _ in range(world_size)]
+        gathered_conditions = [torch.empty_like(rank_conditions_cpu) for _ in range(world_size)]
+        
+        dist.all_gather(gathered_samples, rank_samples_tensor, group=gloo_group)
+        dist.all_gather(gathered_conditions, rank_conditions_cpu, group=gloo_group)
+        
+        # Create npz directly from gathered samples
+        if rank == 0:
+            all_gathered_samples = torch.cat(gathered_samples, dim=0).numpy()
+            all_gathered_conditions = torch.cat(gathered_conditions, dim=0).numpy()
+            print(f"Total gathered samples shape: {all_gathered_samples.shape}")
+            print(f"Total gathered conditions shape: {all_gathered_conditions.shape}")
+            
+            npz_path = f"{sample_folder_dir}.npz"
+            np.savez(npz_path, arr_0=all_gathered_samples, conditions=all_gathered_conditions)
+            print(f"Saved .npz file to {npz_path} [samples shape={all_gathered_samples.shape}, conditions shape={all_gathered_conditions.shape}].")
+            print("Done.")
     
     dist.barrier()
     dist.destroy_process_group()

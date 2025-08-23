@@ -33,7 +33,8 @@ model:
         randomize_temperature: 9.5
         guidance_scale: 4.5
         guidance_decay: "linear"
-        
+        scheduler_mode: "arccos"
+        sampler_type: "confidence"
 
 dataset:
     preprocessing:

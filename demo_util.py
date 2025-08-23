@@ -102,7 +102,8 @@ def sample_tokens(generator,
                  num_sample_steps=8,
                  scheduler_mode='arccos',
                  sampler_type='confidence',
-                 device="cuda"):
+                 device="cuda",
+                 return_trace=False):
     generator.eval()
     if labels is None:
         # goldfish, chicken, tiger, cat, hourglass, ship, dog, race car, airliner, teddy bear, random
@@ -111,7 +112,7 @@ def sample_tokens(generator,
     if not isinstance(labels, torch.Tensor):
         labels = torch.LongTensor(labels).to(device)
 
-    generated_tokens = generator.generate(
+    result = generator.generate(
         condition=labels,
         guidance_scale=guidance_scale,
         guidance_decay=guidance_decay,
@@ -120,9 +121,28 @@ def sample_tokens(generator,
         softmax_temperature_annealing=softmax_temperature_annealing,
         num_sample_steps=num_sample_steps,
         scheduler_mode=scheduler_mode,
-        sampler_type=sampler_type)
+        sampler_type=sampler_type,
+        return_trace=return_trace)
+    # result = create_dummy_trace(batch_size=labels.size(0), device=device)
 
-    return generated_tokens
+    return result
+
+
+@torch.no_grad()
+def create_dummy_trace(batch_size=4, num_steps=32, seq_len=32, device="cuda"):
+    """
+    Create a dummy trace of all zero token ids for testing purposes.
+    
+    Args:
+        batch_size: Number of samples in the batch
+        num_steps: Number of generation steps
+        seq_len: Sequence length (number of tokens per image)
+        device: Device to create the tensor on
+    
+    Returns:
+        torch.Tensor: Dummy trace tensor of shape [batch_size, num_steps, seq_len] filled with zeros
+    """
+    return torch.randint(4096, (batch_size, num_steps, seq_len), dtype=torch.long, device=device)
 
 
 @torch.no_grad()

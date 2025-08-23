@@ -43,7 +43,7 @@ def create_temp_config(base_config_path, num_steps, randomize_temperature, guida
     return str(temp_config_path)
 
 
-def run_torchrun(config_path, num_steps, randomize_temperature, guidance_scale, guidance_decay, softmax_temperature_annealing, scheduler_mode, sampler_type):
+def run_torchrun(config_path, num_steps, randomize_temperature, guidance_scale, guidance_decay, softmax_temperature_annealing, scheduler_mode, sampler_type, sample_tokens_only=False):
     """Run the torchrun command with the specified config and output directory."""
     
     # Detect available GPUs
@@ -65,6 +65,9 @@ def run_torchrun(config_path, num_steps, randomize_temperature, guidance_scale, 
         f"config={config_path}",
         f"experiment.output_dir={output_dir}"
     ]
+    
+    if sample_tokens_only:
+        cmd.append("experiment.sample_tokens_only=true")
     
     print(f"\n{'='*80}")
     print(f"Running experiment with:")
@@ -94,6 +97,12 @@ def run_torchrun(config_path, num_steps, randomize_temperature, guidance_scale, 
 def main():
     """Main function to run the parameter sweep."""
     
+    # Check for --sample-tokens-only flag
+    import sys
+    sample_tokens_only = '--sample-tokens-only' in sys.argv
+    if sample_tokens_only:
+        print("🔍 Running in sample-tokens-only mode (skipping image decoding)")
+    
     # Define hyperparameter ranges
     # num_steps_values = [8, 16, 32]
     # randomize_temperature_values = [9.0, 0.0, 3.0, 6.0, 12.0]
@@ -102,7 +111,8 @@ def main():
     randomize_temperature_values = [9.5]
     guidance_scale_values = [4.5]
     scheduler_mode_values = ['linear']
-    sampler_type_values = ['confidence', 'random', 'fixed']
+    # sampler_type_values = ['confidence', 'random', 'fixed']
+    sampler_type_values = ['confidence']
     
     # Fixed parameters
     guidance_decay = "linear"
@@ -117,8 +127,8 @@ def main():
     
     # Create results directory if it doesn't exist
     global out_dir
-    out_dir = "/tmp/kevin02/gcs/tok1d"
-    # out_dir = "results"
+    # out_dir = "/tmp/kevin02/gcs/tok1d"
+    out_dir = "results"
     os.makedirs(out_dir, exist_ok=True)
     
     # Generate all combinations
@@ -171,7 +181,8 @@ def main():
                 guidance_decay,
                 softmax_temperature_annealing,
                 scheduler_mode,
-                sampler_type
+                sampler_type,
+                sample_tokens_only
             )
             
             if success:
