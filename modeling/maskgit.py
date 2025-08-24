@@ -193,8 +193,13 @@ class ImageBert(BaseModel, PyTorchModelHubMixin, tags=["arxiv:2406.07550", "imag
             if sampler_type == 'fixed':
                 schedule = [6, 1, 9, 19, 8, 13, 2, 28, 23, 22, 16, 31, 4, 30, 18, 12, 27, 11, 0, 20, 5, 24, 14, 7, 29, 26, 15, 25, 3, 21, 17, 10]
                 batch_size = condition.shape[0]
-                masking = torch.zeros((batch_size, self.image_seq_len), dtype=torch.bool, device=device)
-                masking[:, schedule[step]] = True
+
+                # keep_mask = positions we want to UNMASK (keep sampled_ids)
+                keep_mask = torch.zeros((batch_size, self.image_seq_len), dtype=torch.bool, device=device)
+                keep_mask[:, schedule[:step + 1]] = True   # cumulative up to current step
+
+                # masking = positions we want to keep masked
+                masking = ~keep_mask
             elif scheduler_mode in ['arccos', 'linear']:
                 mask_len = torch.Tensor([np.floor(self.image_seq_len * mask_ratio)]).to(device)
                 mask_len = torch.maximum(torch.Tensor([1]).to(device),
